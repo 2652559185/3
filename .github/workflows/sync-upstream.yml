@@ -1,1 +1,72 @@
+name: 同步上游 api-enhanced
 
+on:
+  schedule:
+    # 每天 UTC 01:00 = 北京时间 09:00
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      reset:
+        description: '首次对齐：用上游强制覆盖我的 main（会丢弃本地改动）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出你的仓库
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: 添加上游仓库
+        run: |
+          git remote add upstream https://github.com/neteasecloudmusicapienhanced/api-enhanced.git
+          git fetch upstream main
+
+      - name: 合并上游
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "changed=false" >> $GITHUB_OUTPUT
+
+          # 首次对齐：把本地 main 直接指向上游，历史从此一致
+          if [ "${{ inputs.reset }}" = "true" ]; then
+            git reset --hard upstream/main
+            echo "changed=true"    >> $GITHUB_OUTPUT
+            echo "force=true"      >> $GITHUB_OUTPUT
+            echo "已对齐到上游 $(git rev-parse --short upstream/main)"
+            exit 0
+          fi
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "已是最新，无需合并"
+            exit 0
+          fi
+
+          # --allow-unrelated-histories：兼容"上传文件"方式建的仓库
+          # -X theirs：同名文件有差异时以上游为准，避免每天卡在冲突
+          if ! git merge --allow-unrelated-histories -X theirs upstream/main --no-edit \
+               -m "chore: sync upstream $(date -u +%Y-%m-%dT%H:%M:%SZ)"; then
+            echo "::error::合并失败，请查看上面的 git 输出"
+            git merge --abort || true
+            exit 1
+          fi
+
+          echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: 推送到你的 main
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          if [ "${{ steps.merge.outputs.force }}" = "true" ]; then
+            git push --force-with-lease origin HEAD:main
+          else
+            git push origin HEAD:main
+          fi
