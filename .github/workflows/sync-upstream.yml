@@ -23,7 +23,8 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.SYNC_TOKEN }}
+          persist-credentials: false   # 关键：不把 token 写入 git 配置
 
       - name: 添加上游仓库
         run: |
@@ -37,7 +38,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           echo "changed=false" >> $GITHUB_OUTPUT
 
-          # 首次对齐：把本地 main 直接指向上游，历史从此一致
           if [ "${{ inputs.reset }}" = "true" ]; then
             git reset --hard upstream/main
             echo "changed=true"    >> $GITHUB_OUTPUT
@@ -51,8 +51,6 @@ jobs:
             exit 0
           fi
 
-          # --allow-unrelated-histories：兼容"上传文件"方式建的仓库
-          # -X theirs：同名文件有差异时以上游为准，避免每天卡在冲突
           if ! git merge --allow-unrelated-histories -X theirs upstream/main --no-edit \
                -m "chore: sync upstream $(date -u +%Y-%m-%dT%H:%M:%SZ)"; then
             echo "::error::合并失败，请查看上面的 git 输出"
@@ -65,8 +63,9 @@ jobs:
       - name: 推送到你的 main
         if: steps.merge.outputs.changed == 'true'
         run: |
+          REMOTE_URL="https://${{ secrets.SYNC_TOKEN }}@github.com/2652559185/3.git"
           if [ "${{ steps.merge.outputs.force }}" = "true" ]; then
-            git push --force-with-lease origin HEAD:main
+            git push --force-with-lease "$REMOTE_URL" HEAD:main
           else
-            git push origin HEAD:main
+            git push "$REMOTE_URL" HEAD:main
           fi
